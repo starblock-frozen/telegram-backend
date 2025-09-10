@@ -87,7 +87,7 @@ Click the button below to launch our web application and start exploring!`;
         [
           {
             text: '📞 Contact Support',
-            url: 'https://t.me/your_support_username'
+            url: 'https://t.me/+XMEn5LldGD1jZjkx'
           }
         ]
       ]
