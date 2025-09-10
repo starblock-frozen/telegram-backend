@@ -102,7 +102,7 @@ const createDomains = async (req, res) => {
       } = domainInfo;
 
       // Validation for each domain
-      if (!domainName || !country || !category || !price) {
+      if (!domainName || !country || !category) {
         errors.push({
           index: i,
           error: 'Required fields: domainName, country, category, price',
@@ -201,7 +201,7 @@ const createDomain = async (req, res) => {
     } = req.body;
 
     // Validation
-    if (!domainName || !country || !category || !price) {
+    if (!domainName || !country || !category) {
       return res.status(400).json({
         success: false,
         message: 'Required fields: domainName, country, category, price'
