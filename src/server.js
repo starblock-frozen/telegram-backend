@@ -6,6 +6,10 @@ require('dotenv').config();
 const domainRoutes = require('./routes/domainRoutes');
 const ticketRoutes = require('./routes/ticketRoutes');
 const authRoutes = require('./routes/authRoutes');
+const telegramRoutes = require('./routes/telegramRoutes');
+
+// Initialize Telegram bot
+const { initializeTelegramBot } = require('./controllers/telegramController');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -19,6 +23,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use('/api/auth', authRoutes);
 app.use('/api/domains', domainRoutes);
 app.use('/api/tickets', ticketRoutes);
+app.use('/api/telegram', telegramRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -42,6 +47,10 @@ app.use((error, req, res, next) => {
   });
 });
 
+// Initialize Telegram bot after server setup
+initializeTelegramBot();
+
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
+  console.log('Telegram bot is initializing...');
 });
