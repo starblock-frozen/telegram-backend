@@ -15,7 +15,6 @@ const { db } = require('../config/firebase');
 const COLLECTION_NAME = 'tickets';
 const DOMAINS_COLLECTION = 'domains';
 
-// Get all tickets
 const getAllTickets = async (req, res) => {
   try {
     const q = query(collection(db, COLLECTION_NAME), orderBy("request_time", "desc"));
@@ -43,17 +42,15 @@ const getAllTickets = async (req, res) => {
   }
 };
 
-// Create new ticket
 const createTicket = async (req, res) => {
   try {
     const {
       customer_id,
-      request_domains, // Array of domain names
+      request_domains,
       price,
       status = 'New'
     } = req.body;
 
-    // Validation
     if (!customer_id || !request_domains || !Array.isArray(request_domains) || request_domains.length === 0) {
       return res.status(400).json({
         success: false,
@@ -90,7 +87,6 @@ const createTicket = async (req, res) => {
   }
 };
 
-// Update ticket
 const updateTicket = async (req, res) => {
   try {
     const { id } = req.params;
@@ -115,7 +111,6 @@ const updateTicket = async (req, res) => {
   }
 };
 
-// Delete ticket
 const deleteTicket = async (req, res) => {
   try {
     const { id } = req.params;
@@ -135,7 +130,6 @@ const deleteTicket = async (req, res) => {
   }
 };
 
-// Mark ticket as read
 const markAsRead = async (req, res) => {
   try {
     const { id } = req.params;
@@ -159,7 +153,6 @@ const markAsRead = async (req, res) => {
   }
 };
 
-// Helper function to mark domains as sold
 const markDomainsAsSold = async (domainNames) => {
   const results = {
     updated: [],
@@ -169,7 +162,6 @@ const markDomainsAsSold = async (domainNames) => {
 
   for (const domainName of domainNames) {
     try {
-      // Find domain by name
       const q = query(collection(db, DOMAINS_COLLECTION), where("domainName", "==", domainName));
       const querySnapshot = await getDocs(q);
       
@@ -178,13 +170,12 @@ const markDomainsAsSold = async (domainNames) => {
         continue;
       }
 
-      // Update all matching domains (in case of duplicates)
       const updatePromises = [];
       querySnapshot.forEach((domainDoc) => {
         const domainRef = doc(db, DOMAINS_COLLECTION, domainDoc.id);
         updatePromises.push(
           updateDoc(domainRef, {
-            status: false, // Mark as sold (false = not available)
+            status: false,
             updatedAt: new Date().toISOString()
           })
         );
@@ -204,13 +195,11 @@ const markDomainsAsSold = async (domainNames) => {
   return results;
 };
 
-// Mark ticket as sold (Updated to also mark domains as sold)
 const markAsSold = async (req, res) => {
   try {
     const { id } = req.params;
-    const { price } = req.body;
+    const { price, soldDomains } = req.body;
     
-    // First, get the ticket to access the domain names
     const ticketRef = doc(db, COLLECTION_NAME, id);
     const ticketDoc = await getDoc(ticketRef);
     
@@ -222,26 +211,34 @@ const markAsSold = async (req, res) => {
     }
 
     const ticketData = ticketDoc.data();
-    const requestDomains = ticketData.request_domains || [];
+    let domainsToProcess = ticketData.request_domains || [];
+    let updatedRequestDomains = [...domainsToProcess];
 
-    // Update ticket status
+    if (soldDomains && Array.isArray(soldDomains)) {
+      const soldDomainNames = soldDomains.filter(item => item.sold).map(item => item.domain);
+      const notSoldDomainNames = soldDomains.filter(item => !item.sold).map(item => item.domain);
+      
+      domainsToProcess = soldDomainNames;
+      updatedRequestDomains = updatedRequestDomains.filter(domain => !notSoldDomainNames.includes(domain));
+    }
+
     await updateDoc(ticketRef, {
       status: 'Sold',
       price: parseFloat(price) || 0,
+      request_domains: updatedRequestDomains,
       updatedAt: new Date().toISOString()
     });
 
-    // Mark corresponding domains as sold
     let domainUpdateResults = { updated: [], notFound: [], errors: [] };
-    if (requestDomains.length > 0) {
-      domainUpdateResults = await markDomainsAsSold(requestDomains);
+    if (domainsToProcess.length > 0) {
+      domainUpdateResults = await markDomainsAsSold(domainsToProcess);
     }
 
     res.status(200).json({
       success: true,
       message: 'Ticket marked as sold',
       domainUpdates: {
-        totalDomains: requestDomains.length,
+        totalDomains: domainsToProcess.length,
         updated: domainUpdateResults.updated.length,
         notFound: domainUpdateResults.notFound.length,
         errors: domainUpdateResults.errors.length,
@@ -257,7 +254,6 @@ const markAsSold = async (req, res) => {
   }
 };
 
-// Mark ticket as cancelled
 const markAsCancelled = async (req, res) => {
   try {
     const { id } = req.params;
@@ -281,7 +277,6 @@ const markAsCancelled = async (req, res) => {
   }
 };
 
-// Get new tickets count
 const getNewTicketsCount = async (req, res) => {
   try {
     const q = query(collection(db, COLLECTION_NAME), where("status", "==", "New"));
@@ -313,7 +308,6 @@ const getTicketsByCustomerAndDomains = async (req, res) => {
 
     const tickets = [];
     
-    // Get all tickets for this customer
     const q = query(
       collection(db, COLLECTION_NAME), 
       where("customer_id", "==", customer_id),
@@ -326,7 +320,6 @@ const getTicketsByCustomerAndDomains = async (req, res) => {
 
     querySnapshot.forEach((doc) => {
       const ticketData = doc.data();
-      // Check if any requested domain matches our domains
       const matchingDomains = ticketData.request_domains.filter(domain => 
         domains.includes(domain)
       );
