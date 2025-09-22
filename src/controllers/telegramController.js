@@ -11,6 +11,7 @@ const { db } = require('../config/firebase');
 const { bot } = require('../config/telegram');
 
 const COLLECTION_NAME = 'telegram_users';
+const JOIN_REQUESTS_COLLECTION = 'join_requests';
 
 let botInitialized = false;
 
@@ -38,6 +39,42 @@ const checkChannelMembership = async (userId) => {
 
 const isAdmin = (userId) => {
   return ADMIN_USER_IDS.includes(userId);
+};
+
+const saveJoinRequest = async (userInfo) => {
+  try {
+    const { id, username, first_name, last_name } = userInfo;
+    
+    // Check if join request already exists
+    const q = query(collection(db, JOIN_REQUESTS_COLLECTION), where("telegram_id", "==", id.toString()));
+    const querySnapshot = await getDocs(q);
+    
+    const requestData = {
+      telegram_id: id.toString(),
+      username: username || '',
+      first_name: first_name || '',
+      last_name: last_name || '',
+      status: 'pending', // pending, approved, rejected
+      request_time: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    if (querySnapshot.empty) {
+      requestData.createdAt = new Date().toISOString();
+      await addDoc(collection(db, JOIN_REQUESTS_COLLECTION), requestData);
+      console.log(`Join request saved: ${username || first_name} (${id})`);
+    } else {
+      const requestDoc = querySnapshot.docs[0];
+      const requestRef = doc(db, JOIN_REQUESTS_COLLECTION, requestDoc.id);
+      await updateDoc(requestRef, requestData);
+      console.log(`Join request updated: ${username || first_name} (${id})`);
+    }
+    
+    return true;
+  } catch (error) {
+    console.error('Error saving join request:', error);
+    return false;
+  }
 };
 
 const getChannelSubscribersList = async () => {
@@ -212,6 +249,180 @@ const initializeTelegramBot = () => {
     console.log('Telegram bot initialized');
     botInitialized = true;
 
+    // Handle chat join requests
+    bot.on('chat_join_request', async (chatJoinRequest) => {
+      const { chat, from, date } = chatJoinRequest;
+      
+      console.log(`Join request from user: ${from.username || from.first_name} (${from.id}) for chat: ${chat.title}`);
+      
+      // Save join request to database
+      await saveJoinRequest(from);
+      
+      // Notify user that their request is pending
+      const pendingMessage = `⏳ <b>Join Request Submitted</b>
+
+Your request to join our channel has been submitted and is pending approval.
+
+<b>What happens next?</b>
+• Our admins will review your request
+• You'll be notified once approved or rejected
+• If approved, you'll get access to our premium domain marketplace
+
+<b>Please wait for admin approval...</b>
+
+Thank you for your patience! 🙏`;
+
+      try {
+        await bot.sendMessage(from.id, pendingMessage, {
+          parse_mode: 'HTML'
+        });
+      } catch (error) {
+        console.error('Error sending pending message:', error);
+      }
+    });
+
+    // Handle when user joins the channel (approved)
+    bot.on('chat_member', async (chatMemberUpdate) => {
+      const { chat, new_chat_member, old_chat_member, from } = chatMemberUpdate;
+      
+      // Check if this is our target channel
+      if (chat.id.toString() !== REQUIRED_CHANNEL_ID.replace('@', '').replace('-', '')) {
+        return;
+      }
+      
+      // Check if user status changed from restricted/left to member
+      const oldStatus = old_chat_member?.status;
+      const newStatus = new_chat_member?.status;
+      const userId = new_chat_member?.user?.id;
+      
+      if (userId && oldStatus !== 'member' && newStatus === 'member') {
+        console.log(`User ${userId} was approved to join the channel`);
+        
+        // Update join request status
+        try {
+          const q = query(collection(db, JOIN_REQUESTS_COLLECTION), where("telegram_id", "==", userId.toString()));
+          const querySnapshot = await getDocs(q);
+          
+          if (!querySnapshot.empty) {
+            const requestDoc = querySnapshot.docs[0];
+            const requestRef = doc(db, JOIN_REQUESTS_COLLECTION, requestDoc.id);
+            await updateDoc(requestRef, {
+              status: 'approved',
+              approved_time: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            });
+          }
+        } catch (error) {
+          console.error('Error updating join request status:', error);
+        }
+        
+        // Send approval notification
+        const approvalMessage = `🎉 <b>Welcome! Your Join Request Approved</b>
+
+Congratulations! You have been approved to join our premium domain marketplace channel.
+
+<b>You now have access to:</b>
+✅ Browse available domains
+✅ Check domain details and pricing  
+✅ Submit purchase requests
+✅ Track your orders
+✅ Get exclusive deals and notifications
+
+<b>Ready to start?</b>
+Click the button below to launch our web application and start exploring premium domains!
+
+Welcome to our community! 🚀`;
+
+        const keyboard = {
+          inline_keyboard: [
+            [
+              {
+                text: '🚀 Launch Web App',
+                web_app: { url: process.env.WEB_APP_URL || 'https://google.com' }
+              }
+            ],
+            [
+              {
+                text: '📞 Contact Support',
+                url: 'https://t.me/+XMEn5LldGD1jZjkx'
+              }
+            ]
+          ]
+        };
+
+        try {
+          await bot.sendMessage(userId, approvalMessage, {
+            reply_markup: keyboard,
+            parse_mode: 'HTML'
+          });
+          
+          // Also save user info as they are now a member
+          await saveUserInfo(new_chat_member.user);
+        } catch (error) {
+          console.error('Error sending approval message:', error);
+        }
+      }
+      
+      // Handle rejection (user removed from channel)
+      if (userId && (oldStatus === 'member' || oldStatus === 'restricted') && (newStatus === 'kicked' || newStatus === 'left')) {
+        console.log(`User ${userId} was removed/left the channel`);
+        
+        // Update join request status
+        try {
+          const q = query(collection(db, JOIN_REQUESTS_COLLECTION), where("telegram_id", "==", userId.toString()));
+          const querySnapshot = await getDocs(q);
+          
+          if (!querySnapshot.empty) {
+            const requestDoc = querySnapshot.docs[0];
+            const requestRef = doc(db, JOIN_REQUESTS_COLLECTION, requestDoc.id);
+            await updateDoc(requestRef, {
+              status: 'rejected',
+              rejected_time: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            });
+          }
+        } catch (error) {
+          console.error('Error updating join request status:', error);
+        }
+        
+        // Send rejection notification only if it was a kick (not voluntary leave)
+        if (newStatus === 'kicked') {
+          const rejectionMessage = `❌ <b>Join Request Rejected</b>
+
+Unfortunately, your request to join our channel has been rejected by the administrators.
+
+<b>Possible reasons:</b>
+• Channel capacity limits
+• Administrative review requirements
+• Channel policies
+
+You can try submitting a new request later or contact our support team for more information.
+
+Thank you for your understanding.`;
+
+          const keyboard = {
+            inline_keyboard: [
+              [
+                {
+                  text: '📞 Contact Support',
+                  url: 'https://t.me/+XMEn5LldGD1jZjkx'
+                }
+              ]
+            ]
+          };
+
+          try {
+            await bot.sendMessage(userId, rejectionMessage, {
+              reply_markup: keyboard,
+              parse_mode: 'HTML'
+            });
+          } catch (error) {
+            console.error('Error sending rejection message:', error);
+          }
+        }
+      }
+    });
+
     // Admin command to get channel subscribers list
     bot.onText(/\/getchannelsubscriberlist/, async (msg) => {
       const chatId = msg.chat.id;
@@ -324,29 +535,36 @@ Please try again later or contact the system administrator.`;
       
       if (!isChannelMember) {
         // User is not a member of the channel
-        const notMemberMessage = `🚫 <b>Access Restricted</b>
+        const notMemberMessage = `🔐 <b>Channel Membership Required</b>
 
-To use this bot and access our premium domain marketplace, you must first join our official channel.
+To access our premium domain marketplace, you need to be a member of our official channel.
 
 <b>Why join our channel?</b>
 🔔 Get notified about new domain listings
-💎 Access to exclusive deals
-📈 Market insights and tips
-🎯 Priority support
+💎 Access to exclusive deals and premium domains
+📈 Market insights and domain investment tips
+🎯 Priority customer support
+🚀 Access to our web application
 
-Please join our channel first, then come back and use /start again.`;
+<b>How it works:</b>
+1. Click "Request to Join Channel" below
+2. Wait for admin approval
+3. Once approved, you'll be notified automatically
+4. Return here and use /start to access the web app
+
+<i>Note: Join requests are reviewed by our administrators. You'll be notified once your request is processed.</i>`;
 
         const keyboard = {
           inline_keyboard: [
             [
               {
-                text: '📢 Join Our Channel',
+                text: '📢 Request to Join Channel',
                 url: CHANNEL_INVITE_LINK
               }
             ],
             [
               {
-                text: '🔄 I Joined - Check Again',
+                text: '🔄 I\'m Already a Member',
                 callback_data: 'check_membership'
               }
             ]
@@ -367,16 +585,20 @@ Please join our channel first, then come back and use /start again.`;
       // User is a channel member, proceed with normal flow
       await saveUserInfo(user);
       
-      const welcomeMessage = `🎉 Welcome to Domain Store Bot!
+      const welcomeMessage = `🎉 <b>Welcome to Domain Store Bot!</b>
       
-Thank you for subscribing! You now have access to our premium domain marketplace.
+Thank you for being a member of our channel! You now have full access to our premium domain marketplace.
 
-✅ Browse available domains
-✅ Check domain details and pricing  
-✅ Submit purchase requests
-✅ Track your orders
+<b>What you can do:</b>
+✅ Browse thousands of available domains
+✅ Check detailed domain metrics (DA, PA, SS, Backlinks)
+✅ View pricing and domain categories
+✅ Submit purchase requests instantly
+✅ Track your order status
+✅ Get exclusive member deals
 
-Click the button below to launch our web application and start exploring!`;
+<b>Ready to explore premium domains?</b>
+Click the button below to launch our web application and start your domain investment journey!`;
 
       const keyboard = {
         inline_keyboard: [
@@ -390,6 +612,10 @@ Click the button below to launch our web application and start exploring!`;
             {
               text: '📞 Contact Support',
               url: 'https://t.me/+XMEn5LldGD1jZjkx'
+            },
+            {
+              text: '💬 Join Channel',
+              url: CHANNEL_INVITE_LINK
             }
           ]
         ]
@@ -419,19 +645,19 @@ Click the button below to launch our web application and start exploring!`;
 
 You need to be a member of our channel to access help and other features.
 
-Please join our channel first:`;
+Please request to join our channel first and wait for approval:`;
 
         const keyboard = {
           inline_keyboard: [
             [
               {
-                text: '📢 Join Our Channel',
+                text: '📢 Request to Join Channel',
                 url: CHANNEL_INVITE_LINK
               }
             ],
             [
               {
-                text: '🔄 I Joined - Check Again',
+                text: '🔄 I\'m Already a Member',
                 callback_data: 'check_membership'
               }
             ]
@@ -451,47 +677,58 @@ Please join our channel first:`;
       
       await saveUserInfo(user);
       
-      let helpMessage = `🆘 <b>Domain Store Bot - Help</b>
+      let helpMessage = `🆘 <b>Domain Store Bot - Help Guide</b>
 
 <b>Available Commands:</b>
-/start - Subscribe and launch the web app
-/help - Show this help message`;
+/start - Access the domain marketplace
+/help - Show this comprehensive help guide`;
 
       // Add admin commands if user is admin
       if (isAdmin(user.id)) {
         helpMessage += `
 
 <b>Admin Commands:</b>
-/getchannelsubscriberlist - Get channel subscribers report`;
+/getchannelsubscriberlist - Get detailed channel subscribers report`;
       }
 
       helpMessage += `
 
-<b>How to use:</b>
-1️⃣ Use /start to subscribe and get access
+<b>How to Use the Bot:</b>
+1️⃣ Use /start to access the web application
 2️⃣ Click "Launch Web App" to browse domains
-3️⃣ Browse available domains in our marketplace
-4️⃣ Submit purchase requests directly through the app
-5️⃣ Track your orders and tickets
+3️⃣ Search and filter domains by your preferences
+4️⃣ Submit purchase requests for domains you want
+5️⃣ Track your orders and communicate with support
 
-<b>Features:</b>
-🔍 Search domains by category, country, DA/PA
-💰 View pricing and domain metrics
-📝 Submit purchase requests
-📊 Track order status
-🔒 Secure authentication
+<b>Web App Features:</b>
+🔍 <b>Search & Filter:</b> Find domains by category, country, DA/PA scores
+💰 <b>Pricing Info:</b> View detailed pricing and domain metrics
+📝 <b>Purchase Requests:</b> Submit requests directly through the app
+📊 <b>Order Tracking:</b> Monitor your purchase status in real-time
+🔒 <b>Secure Platform:</b> Safe and authenticated transactions
 
-<b>Need Support?</b>
-Contact our support team for any assistance with your domain purchases or technical issues.
+<b>Domain Metrics Explained:</b>
+• <b>DA (Domain Authority):</b> Search engine ranking potential (0-100)
+• <b>PA (Page Authority):</b> Individual page ranking potential (0-100)
+• <b>SS (Spam Score):</b> Lower is better (0-17)
+• <b>Backlinks:</b> Number of referring domains
 
-<b>Ready to start?</b> Use /start command to begin!`;
+<b>Need Assistance?</b>
+Our support team is available to help with:
+• Domain selection advice
+• Purchase process guidance
+• Technical issues
+• Account management
+
+<b>Ready to start your domain investment journey?</b>
+Use /start to launch the web application!`;
 
       const keyboard = {
         inline_keyboard: [
           [
             {
               text: '🚀 Launch Web App',
-              web_app: { url: process.env.WEB_APP_URL || 'https://your-web-app-url.com' }
+              web_app: { url: process.env.WEB_APP_URL || 'https://google.com' }
             }
           ],
           [
@@ -501,7 +738,7 @@ Contact our support team for any assistance with your domain purchases or techni
             },
             {
               text: '📞 Support',
-              url: 'https://t.me/your_support_username'
+              url: 'https://t.me/+XMEn5LldGD1jZjkx'
             }
           ]
         ]
@@ -533,14 +770,17 @@ Contact our support team for any assistance with your domain purchases or techni
           
           const welcomeMessage = `🎉 <b>Welcome to Domain Store Bot!</b>
 
-Great! You're now a member of our channel. You have access to our premium domain marketplace.
+Perfect! You're now confirmed as a member of our channel. You have full access to our premium domain marketplace.
 
-✅ Browse available domains
-✅ Check domain details and pricing  
-✅ Submit purchase requests
-✅ Track your orders
+<b>What's available to you:</b>
+✅ Browse thousands of premium domains
+✅ Access detailed domain analytics
+✅ Submit purchase requests instantly
+✅ Track orders in real-time
+✅ Get member-exclusive deals
 
-Click the button below to launch our web application!`;
+<b>Ready to start?</b>
+Click the button below to launch our web application and explore premium domains!`;
 
           const keyboard = {
             inline_keyboard: [
@@ -570,23 +810,29 @@ Click the button below to launch our web application!`;
             console.error('Error editing message:', error);
           }
         } else {
-          // User still hasn't joined
-          const stillNotMemberMessage = `❌ <b>Still Not a Member</b>
+          // User still hasn't joined or request is pending
+          const stillNotMemberMessage = `⏳ <b>Membership Status Check</b>
 
-It looks like you haven't joined our channel yet, or there might be a delay in updating your membership status.
+We couldn't confirm your channel membership yet. This could mean:
 
-Please make sure you:
-1. Click "Join Our Channel" button
-2. Actually join the channel (not just visit)
-3. Wait a few seconds and try again
+<b>If you just requested to join:</b>
+• Your join request is still pending admin approval
+• Please wait for our administrators to review your request
+• You'll be notified automatically once approved
 
-If you've already joined, please wait a moment and try again.`;
+<b>If you think you're already a member:</b>
+• There might be a delay in updating membership status
+• Try waiting a few minutes and check again
+• Make sure you actually joined (not just visited) the channel
+
+<b>Need to submit a join request?</b>
+Click the button below to request channel access.`;
 
           const keyboard = {
             inline_keyboard: [
               [
                 {
-                  text: '📢 Join Our Channel',
+                  text: '📢 Request to Join Channel',
                   url: CHANNEL_INVITE_LINK
                 }
               ],
@@ -615,19 +861,23 @@ If you've already joined, please wait a moment and try again.`;
         const isChannelMember = await checkChannelMembership(user.id);
         
         if (!isChannelMember) {
-          const notMemberMessage = `🚫 You need to join our channel first to access the bot.`;
+          const notMemberMessage = `🔐 <b>Channel Membership Required</b>
+
+You need to be a member of our channel to access the bot features.
+
+Please request to join our channel and wait for admin approval:`;
           
           const keyboard = {
             inline_keyboard: [
               [
                 {
-                  text: '📢 Join Our Channel',
+                  text: '📢 Request to Join Channel',
                   url: CHANNEL_INVITE_LINK
                 }
               ],
               [
                 {
-                  text: '🔄 I Joined - Check Again',
+                  text: '🔄 I\'m Already a Member',
                   callback_data: 'check_membership'
                 }
               ]
@@ -649,16 +899,24 @@ If you've already joined, please wait a moment and try again.`;
 
         await saveUserInfo(user);
         
-        const welcomeMessage = `🎉 Welcome back to Domain Store Bot!
+        const welcomeMessage = `🎉 <b>Welcome Back to Domain Store Bot!</b>
 
-You're already subscribed! Click the button below to launch our web application.`;
+You're already a verified member! Ready to continue your domain investment journey?
+
+Click the button below to launch our web application and explore premium domains.`;
 
         const keyboard = {
           inline_keyboard: [
             [
               {
                 text: '🚀 Launch Web App',
-                web_app: { url: process.env.WEB_APP_URL || 'https://your-web-app-url.com' }
+                web_app: { url: process.env.WEB_APP_URL || 'https://google.com' }
+              }
+            ],
+            [
+              {
+                text: '📞 Contact Support',
+                url: 'https://t.me/+XMEn5LldGD1jZjkx'
               }
             ]
           ]
@@ -684,10 +942,12 @@ You're already subscribed! Click the button below to launch our web application.
       const text = msg.text;
       const user = msg.from;
 
+      // Skip if it's a command we already handle
       if (text && (text.startsWith('/start') || text.startsWith('/help') || text.startsWith('/getchannelsubscriberlist'))) {
         return;
       }
 
+      // Handle regular messages
       if (text && !text.startsWith('/')) {
         console.log(`Message from user: ${user.username || user.first_name} (${user.id}): ${text}`);
         
@@ -695,15 +955,113 @@ You're already subscribed! Click the button below to launch our web application.
         const isChannelMember = await checkChannelMembership(user.id);
         
         if (!isChannelMember) {
-          const notMemberMessage = `🚫 You need to join our channel first to interact with the bot.
+          const notMemberMessage = `🔐 <b>Access Restricted</b>
 
-Please join our channel and then use /start command.`;
+You need to be a member of our channel to interact with the bot.
+
+Please request to join our channel first and wait for admin approval. Once approved, you'll be notified automatically and can return to use the bot.`;
 
           const keyboard = {
             inline_keyboard: [
               [
                 {
-                  text: '📢 Join Our Channel',
+                  text: '📢 Request to Join Channel',
+                  url: CHANNEL_INVITE_LINK
+                }
+              ],
+              [
+                {
+                  text: '🔄 I\'m Already a Member',
+                  callback_data: 'check_membership'
+                }
+              ]
+            ]
+          };
+
+          try {
+            await bot.sendMessage(chatId, notMemberMessage, {
+              reply_markup: keyboard,
+              parse_mode: 'HTML'
+            });
+          } catch (error) {
+            console.error('Error sending not member message:', error);
+          }
+          return;
+        }
+
+        // User is a member, provide helpful response
+        const responseMessage = `Hello ${user.first_name}! 👋
+
+I understand you're trying to communicate, but I'm designed to help you access our premium domain marketplace.
+
+<b>Available Commands:</b>
+• /start - Access the domain marketplace
+• /help - Get detailed help and guidance
+
+<b>Ready to explore domains?</b>
+Click the button below to launch our web application and start browsing thousands of premium domains!`;
+
+        const keyboard = {
+          inline_keyboard: [
+            [
+              {
+                text: '🚀 Launch Web App',
+                web_app: { url: process.env.WEB_APP_URL || 'https://google.com' }
+              }
+            ],
+            [
+              {
+                text: '🆘 Help Guide',
+                callback_data: 'help'
+              },
+              {
+                text: '📞 Support',
+                url: 'https://t.me/+XMEn5LldGD1jZjkx'
+              }
+            ]
+          ]
+        };
+
+        try {
+          await bot.sendMessage(chatId, responseMessage, {
+            reply_markup: keyboard,
+            parse_mode: 'HTML'
+          });
+        } catch (error) {
+          console.error('Error sending response message:', error);
+        }
+      }
+    });
+
+    // Handle unknown commands
+    bot.on('message', async (msg) => {
+      const chatId = msg.chat.id;
+      const text = msg.text;
+      const user = msg.from;
+
+      // Only handle commands that start with / but are not recognized
+      if (text && text.startsWith('/') && 
+          !text.startsWith('/start') && 
+          !text.startsWith('/help') && 
+          !text.startsWith('/getchannelsubscriberlist')) {
+        
+        console.log(`Unknown command from user: ${user.username || user.first_name} (${user.id}): ${text}`);
+        
+        // Check channel membership
+        const isChannelMember = await checkChannelMembership(user.id);
+        
+        if (!isChannelMember) {
+          const notMemberMessage = `🔐 <b>Access Restricted</b>
+
+You need to be a member of our channel to use bot commands.
+
+Please request to join our channel first:`;
+
+          const keyboard = {
+            inline_keyboard: [
+              [
+                {
+                  text: '📢 Request to Join Channel',
                   url: CHANNEL_INVITE_LINK
                 }
               ]
@@ -721,44 +1079,56 @@ Please join our channel and then use /start command.`;
           return;
         }
 
-        const responseMessage = `Hello ${user.first_name}! 👋
+        const unknownCommandMessage = `❓ <b>Unknown Command</b>
 
-I understand you're trying to communicate, but I'm designed to help you access our domain marketplace.
+Sorry, I don't recognize the command "${text}".
 
-Use these commands:
-• /start - Subscribe and launch the web app
-• /help - Get detailed help information
+<b>Available Commands:</b>
+• /start - Access the domain marketplace
+• /help - Get detailed help and guidance`;
 
-Ready to explore domains? Click the button below!`;
+        if (isAdmin(user.id)) {
+          unknownCommandMessage += `
+• /getchannelsubscriberlist - Get channel subscribers report (Admin only)`;
+        }
+
+        unknownCommandMessage += `
+
+<b>Need help?</b> Use /help for a complete guide or click the buttons below:`;
 
         const keyboard = {
           inline_keyboard: [
             [
               {
                 text: '🚀 Launch Web App',
-                web_app: { url: process.env.WEB_APP_URL || 'https://your-web-app-url.com' }
+                web_app: { url: process.env.WEB_APP_URL || 'https://google.com' }
               }
             ],
             [
               {
-                text: '🆘 Help',
+                text: '🆘 Help Guide',
                 callback_data: 'help'
+              },
+              {
+                text: '📞 Support',
+                url: 'https://t.me/+XMEn5LldGD1jZjkx'
               }
             ]
           ]
         };
 
         try {
-          await bot.sendMessage(chatId, responseMessage, {
+          await bot.sendMessage(chatId, unknownCommandMessage, {
             reply_markup: keyboard,
             parse_mode: 'HTML'
           });
         } catch (error) {
-          console.error('Error sending response message:', error);
+          console.error('Error sending unknown command message:', error);
         }
       }
     });
 
+    // Error handling
     bot.on('error', (error) => {
       console.error('Telegram bot error:', error);
     });
@@ -805,12 +1175,25 @@ const sendNotificationToAllUsers = async (message) => {
 
     for (const user of users) {
       try {
-        await bot.sendMessage(user.telegram_id, message, {
-          reply_markup: keyboard,
-          parse_mode: 'HTML'
-        });
-        results.sent++;
+        // Check if user is still a channel member before sending notification
+        const isChannelMember = await checkChannelMembership(parseInt(user.telegram_id));
         
+        if (isChannelMember) {
+          await bot.sendMessage(user.telegram_id, message, {
+            reply_markup: keyboard,
+            parse_mode: 'HTML'
+          });
+          results.sent++;
+        } else {
+          results.failed++;
+          results.errors.push({
+            telegram_id: user.telegram_id,
+            username: user.username,
+            error: 'User is not a channel member'
+          });
+        }
+        
+        // Add delay to avoid rate limiting
         await new Promise(resolve => setTimeout(resolve, 100));
       } catch (error) {
         console.error(`Error sending message to user ${user.telegram_id}:`, error);
@@ -914,11 +1297,39 @@ const sendNotification = async (req, res) => {
   }
 };
 
+// Get all join requests (admin function)
+const getAllJoinRequests = async (req, res) => {
+  try {
+    const querySnapshot = await getDocs(collection(db, JOIN_REQUESTS_COLLECTION));
+    const requests = [];
+    
+    querySnapshot.forEach((doc) => {
+      requests.push({
+        id: doc.id,
+        ...doc.data()
+      });
+    });
+
+    res.status(200).json({
+      success: true,
+      data: requests,
+      total: requests.length
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching join requests',
+      error: error.message
+    });
+  }
+};
+
 module.exports = {
   initializeTelegramBot,
   getAllTelegramUsers,
   getUserByTelegramId,
   saveUserInfo,
   sendNotification,
-  getChannelSubscribersList
+  getChannelSubscribersList,
+  getAllJoinRequests
 };
