@@ -340,7 +340,7 @@ Please join our channel first, then come back and use /start again.`;
           inline_keyboard: [
             [
               {
-                text: '📢 Join Our Channel',
+                text: '📢 Join Our Channel' + TELEGRAM_CHANNEL_LINK,
                 url: CHANNEL_INVITE_LINK
               }
             ],
