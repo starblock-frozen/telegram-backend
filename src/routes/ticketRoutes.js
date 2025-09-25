@@ -3,6 +3,7 @@ const {
   getAllTickets,
   createTicket,
   updateTicket,
+  updateNote,
   deleteTicket,
   markAsRead,
   markAsSold,
@@ -10,18 +11,22 @@ const {
   getNewTicketsCount,
   getTicketsByCustomerAndDomains
 } = require('../controllers/ticketController');
+const { authenticateToken } = require('../middleware/auth');
 
 const router = express.Router();
 
-router.get('/', getAllTickets);
-router.get('/count/new', getNewTicketsCount);
+// Public routes (no authentication required) - used by frontend
 router.post('/', createTicket);
-router.put('/:id', updateTicket);
-router.delete('/:id', deleteTicket);
-router.patch('/:id/read', markAsRead);
-router.patch('/:id/sold', markAsSold);
-router.patch('/:id/cancelled', markAsCancelled);
 router.post('/customer-domains', getTicketsByCustomerAndDomains);
 
+// Protected routes (authentication required) - used by admin panel
+router.get('/', authenticateToken, getAllTickets);
+router.get('/count/new', authenticateToken, getNewTicketsCount);
+router.put('/:id', authenticateToken, updateTicket);
+router.patch('/:id/note', authenticateToken, updateNote);
+router.delete('/:id', authenticateToken, deleteTicket);
+router.patch('/:id/read', authenticateToken, markAsRead);
+router.patch('/:id/sold', authenticateToken, markAsSold);
+router.patch('/:id/cancelled', authenticateToken, markAsCancelled);
 
 module.exports = router;

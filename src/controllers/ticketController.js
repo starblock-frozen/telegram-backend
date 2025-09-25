@@ -48,7 +48,8 @@ const createTicket = async (req, res) => {
       customer_id,
       request_domains,
       price,
-      status = 'New'
+      status = 'New',
+      note
     } = req.body;
 
     if (!customer_id || !request_domains || !Array.isArray(request_domains) || request_domains.length === 0) {
@@ -64,21 +65,30 @@ const createTicket = async (req, res) => {
       request_time: new Date().toISOString(),
       price: parseFloat(price) || 0,
       status,
+      note: note || '',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
 
     const docRef = await addDoc(collection(db, COLLECTION_NAME), ticketData);
     
+    const newTicket = {
+      id: docRef.id,
+      ...ticketData
+    };
+
+    // Broadcast new ticket to all connected WebSocket clients
+    if (global.broadcastNewTicket) {
+      global.broadcastNewTicket(newTicket);
+    }
+    
     res.status(201).json({
       success: true,
       message: 'Ticket created successfully',
-      data: {
-        id: docRef.id,
-        ...ticketData
-      }
+      data: newTicket
     });
   } catch (error) {
+    console.error('Error creating ticket:', error);
     res.status(500).json({
       success: false,
       message: 'Error creating ticket',
@@ -106,6 +116,30 @@ const updateTicket = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Error updating ticket',
+      error: error.message
+    });
+  }
+};
+
+const updateNote = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { note } = req.body;
+    
+    const ticketRef = doc(db, COLLECTION_NAME, id);
+    await updateDoc(ticketRef, {
+      note: note || '',
+      updatedAt: new Date().toISOString()
+    });
+    
+    res.status(200).json({
+      success: true,
+      message: 'Note updated successfully'
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error updating note',
       error: error.message
     });
   }
@@ -198,7 +232,7 @@ const markDomainsAsSold = async (domainNames) => {
 const markAsSold = async (req, res) => {
   try {
     const { id } = req.params;
-    const { price, soldDomains } = req.body;
+    const { price, soldDomains, note } = req.body;
     
     const ticketRef = doc(db, COLLECTION_NAME, id);
     const ticketDoc = await getDoc(ticketRef);
@@ -222,28 +256,28 @@ const markAsSold = async (req, res) => {
       updatedRequestDomains = updatedRequestDomains.filter(domain => !notSoldDomainNames.includes(domain));
     }
 
-    await updateDoc(ticketRef, {
+    const updateData = {
       status: 'Sold',
       price: parseFloat(price) || 0,
       request_domains: updatedRequestDomains,
       updatedAt: new Date().toISOString()
-    });
+    };
+
+    if (note !== undefined) {
+      updateData.note = note;
+    }
+
+    await updateDoc(ticketRef, updateData);
 
     let domainUpdateResults = { updated: [], notFound: [], errors: [] };
     if (domainsToProcess.length > 0) {
       domainUpdateResults = await markDomainsAsSold(domainsToProcess);
     }
-
+    
     res.status(200).json({
       success: true,
       message: 'Ticket marked as sold',
-      domainUpdates: {
-        totalDomains: domainsToProcess.length,
-        updated: domainUpdateResults.updated.length,
-        notFound: domainUpdateResults.notFound.length,
-        errors: domainUpdateResults.errors.length,
-        details: domainUpdateResults
-      }
+      domainUpdates: domainUpdateResults
     });
   } catch (error) {
     res.status(500).json({
@@ -257,12 +291,19 @@ const markAsSold = async (req, res) => {
 const markAsCancelled = async (req, res) => {
   try {
     const { id } = req.params;
+    const { note } = req.body;
     
-    const ticketRef = doc(db, COLLECTION_NAME, id);
-    await updateDoc(ticketRef, {
+    const updateData = {
       status: 'Cancelled',
       updatedAt: new Date().toISOString()
-    });
+    };
+
+    if (note !== undefined) {
+      updateData.note = note;
+    }
+
+    const ticketRef = doc(db, COLLECTION_NAME, id);
+    await updateDoc(ticketRef, updateData);
     
     res.status(200).json({
       success: true,
@@ -289,7 +330,7 @@ const getNewTicketsCount = async (req, res) => {
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: 'Error getting new tickets count',
+      message: 'Error fetching new tickets count',
       error: error.message
     });
   }
@@ -316,7 +357,7 @@ const getTicketsByCustomerAndDomains = async (req, res) => {
 
     const querySnapshot = await getDocs(q);
 
-    console.log(customer_id, ":::", domains);
+    console.log('Customer ID:', customer_id, 'Domains:', domains);
 
     querySnapshot.forEach((doc) => {
       const ticketData = doc.data();
@@ -338,6 +379,7 @@ const getTicketsByCustomerAndDomains = async (req, res) => {
       data: tickets
     });
   } catch (error) {
+    console.error('Error fetching tickets by customer and domains:', error);
     res.status(500).json({
       success: false,
       message: 'Error fetching tickets',
@@ -350,6 +392,7 @@ module.exports = {
   getAllTickets,
   createTicket,
   updateTicket,
+  updateNote,
   deleteTicket,
   markAsRead,
   markAsSold,

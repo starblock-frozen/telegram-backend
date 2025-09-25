@@ -20,10 +20,43 @@ const COLLECTION_NAME = 'domains';
 // Configure multer for file uploads
 const upload = multer({ dest: 'uploads/' });
 
+// Format domain name to standard format
+const formatDomainName = (domainName) => {
+  if (!domainName) return domainName;
+  
+  let formatted = domainName.trim();
+  
+  // Remove protocol
+  if (formatted.startsWith('https://')) {
+    formatted = formatted.substring(8);
+  } else if (formatted.startsWith('http://')) {
+    formatted = formatted.substring(7);
+  }
+  
+  // Remove www.
+  if (formatted.startsWith('www.')) {
+    formatted = formatted.substring(4);
+  }
+  
+  // Remove trailing slash
+  if (formatted.endsWith('/')) {
+    formatted = formatted.slice(0, -1);
+  }
+  
+  // Remove any remaining path
+  const slashIndex = formatted.indexOf('/');
+  if (slashIndex !== -1) {
+    formatted = formatted.substring(0, slashIndex);
+  }
+  
+  return formatted.toLowerCase();
+};
+
 // Check if domain exists
 const checkDomainExists = async (domainName) => {
   try {
-    const q = query(collection(db, COLLECTION_NAME), where("domainName", "==", domainName));
+    const formattedDomain = formatDomainName(domainName);
+    const q = query(collection(db, COLLECTION_NAME), where("domainName", "==", formattedDomain));
     const querySnapshot = await getDocs(q);
     return !querySnapshot.empty;
   } catch (error) {
@@ -32,8 +65,51 @@ const checkDomainExists = async (domainName) => {
   }
 };
 
-// Get all domains
+// Get all domains (NEW ENDPOINT)
 const getAllDomains = async (req, res) => {
+  try {
+    const q = query(collection(db, COLLECTION_NAME), orderBy("createdAt", "desc"));
+    const querySnapshot = await getDocs(q);
+    const domains = [];
+    
+    querySnapshot.forEach((doc) => {
+      const data = doc.data();
+      domains.push({
+        id: doc.id,
+        domainName: data.domainName,
+        country: data.country,
+        category: data.category,
+        type: data.type || 'Shell',
+        da: data.da || 0,
+        pa: data.pa || 0,
+        ss: data.ss || 0,
+        backlink: data.backlink || 0,
+        price: data.price,
+        status: data.status,
+        ischannel: data.ischannel,
+        postDateTime: data.postDateTime,
+        createdAt: data.createdAt,
+        updatedAt: data.updatedAt
+      });
+    });
+
+    console.log(`Returning ${domains.length} total domains`);
+    res.status(200).json({
+      success: true,
+      data: domains
+    });
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching all domains',
+      error: error.message
+    });
+  }
+};
+
+// Get admin domains (for admin panel)
+const getAdminDomains = async (req, res) => {
   try {
     const querySnapshot = await getDocs(collection(db, COLLECTION_NAME));
     const domains = [];
@@ -45,14 +121,13 @@ const getAllDomains = async (req, res) => {
       });
     });
 
-    console.log(domains);
+    console.log(`Returning ${domains.length} admin domains`);
     res.status(200).json({
       success: true,
       data: domains
     });
   } catch (error) {
     console.log(error);
-
     res.status(500).json({
       success: false,
       message: 'Error fetching domains',
@@ -91,6 +166,7 @@ const createDomains = async (req, res) => {
         domainName,
         country,
         category,
+        type,
         da,
         pa,
         ss,
@@ -111,12 +187,15 @@ const createDomains = async (req, res) => {
         continue;
       }
 
+      // Format domain name
+      const formattedDomainName = formatDomainName(domainName);
+
       // Check if domain already exists
-      const domainExists = await checkDomainExists(domainName);
+      const domainExists = await checkDomainExists(formattedDomainName);
       if (domainExists) {
         errors.push({
           index: i,
-          error: `Domain '${domainName}' already exists`,
+          error: `Domain '${formattedDomainName}' already exists`,
           domain: domainInfo
         });
         continue;
@@ -124,9 +203,10 @@ const createDomains = async (req, res) => {
 
       try {
         const domainData = {
-          domainName,
+          domainName: formattedDomainName,
           country,
           category,
+          type: type || 'Shell',
           da: parseInt(da) || 0,
           pa: parseInt(pa) || 0,
           ss: parseInt(ss) || 0,
@@ -184,6 +264,7 @@ const createDomain = async (req, res) => {
       domainName,
       country,
       category,
+      type,
       da,
       pa,
       ss,
@@ -208,19 +289,23 @@ const createDomain = async (req, res) => {
       });
     }
 
+    // Format domain name
+    const formattedDomainName = formatDomainName(domainName);
+
     // Check if domain already exists
-    const domainExists = await checkDomainExists(domainName);
+    const domainExists = await checkDomainExists(formattedDomainName);
     if (domainExists) {
       return res.status(409).json({
         success: false,
-        message: `Domain '${domainName}' already exists`
+        message: `Domain '${formattedDomainName}' already exists`
       });
     }
 
     const domainData = {
-      domainName,
+      domainName: formattedDomainName,
       country,
       category,
+      type: type || 'Shell',
       da: parseInt(da) || 0,
       pa: parseInt(pa) || 0,
       ss: parseInt(ss) || 0,
@@ -291,7 +376,7 @@ const importDomainsFromCSV = async (req, res) => {
             return res.status(400).json({
               success: false,
               message: `Invalid CSV format. Missing columns: ${missingColumns.join(', ')}`,
-              expectedFormat: 'Domain Name, Country, Category, DA, PA, SS, Backlinks, Price, Status, Panel Link, Panel Username, Panel Password, Shell Link, Hosting Link, Hosting Username, Hosting Password, Ischannel'
+              expectedFormat: 'Domain Name, Country, Category, Type, DA, PA, SS, Backlinks, Price, Status, Panel Link, Panel Username, Panel Password, Shell Link, Hosting Link, Hosting Username, Hosting Password, Ischannel'
             });
           }
 
@@ -309,12 +394,15 @@ const importDomainsFromCSV = async (req, res) => {
               continue;
             }
 
+            // Format domain name
+            const formattedDomainName = formatDomainName(domainName);
+
             // Check for duplicates
-            const domainExists = await checkDomainExists(domainName);
+            const domainExists = await checkDomainExists(formattedDomainName);
             if (domainExists) {
               duplicates.push({
                 row: i + 1,
-                domainName: domainName,
+                domainName: formattedDomainName,
                 data: row
               });
               continue;
@@ -334,9 +422,10 @@ const importDomainsFromCSV = async (req, res) => {
               const ischannelValue = row['Ischannel'] === 'true' || row['Ischannel'] === true || row['Ischannel'] === 'Posted';
               
               const domainData = {
-                domainName: domainName,
+                domainName: formattedDomainName,
                 country: row['Country']?.trim() || '',
                 category: row['Category']?.trim() || '',
+                type: row['Type']?.trim() || 'Shell',
                 da: parseInt(row['DA']) || 0,
                 pa: parseInt(row['PA']) || 0,
                 ss: parseInt(row['SS']) || 0,
@@ -370,7 +459,7 @@ const importDomainsFromCSV = async (req, res) => {
               const docRef = await addDoc(collection(db, COLLECTION_NAME), domainData);
               successful.push({
                 row: i + 1,
-                domainName: domainName,
+                domainName: formattedDomainName,
                 id: docRef.id
               });
 
@@ -432,22 +521,119 @@ const importDomainsFromCSV = async (req, res) => {
   }
 };
 
+// New bulk actions handler
+const bulkActions = async (req, res) => {
+  try {
+    const { action, domainNames } = req.body;
+
+    if (!action || !domainNames || !Array.isArray(domainNames) || domainNames.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Action and domainNames array are required'
+      });
+    }
+
+    const results = {
+      successful: [],
+      failed: [],
+      total: domainNames.length
+    };
+
+    for (const domainName of domainNames) {
+      try {
+        const formattedDomainName = formatDomainName(domainName);
+        const q = query(collection(db, COLLECTION_NAME), where("domainName", "==", formattedDomainName));
+        const querySnapshot = await getDocs(q);
+
+        if (querySnapshot.empty) {
+          results.failed.push({
+            domainName: formattedDomainName,
+            error: 'Domain not found'
+          });
+          continue;
+        }
+
+        // Process each matching domain (in case of duplicates)
+        const updatePromises = [];
+        querySnapshot.forEach((domainDoc) => {
+          const domainRef = doc(db, COLLECTION_NAME, domainDoc.id);
+          let updateData = { updatedAt: new Date().toISOString() };
+
+          switch (action) {
+            case 'markSold':
+              updateData.status = false;
+              break;
+            case 'markAvailable':
+              updateData.status = true;
+              break;
+            case 'postToChannel':
+              updateData.ischannel = true;
+              updateData.postDateTime = new Date().toISOString();
+              break;
+            case 'removeFromChannel':
+              updateData.ischannel = false;
+              updateData.postDateTime = null;
+              break;
+            default:
+              throw new Error(`Unknown action: ${action}`);
+          }
+
+          updatePromises.push(updateDoc(domainRef, updateData));
+        });
+
+        await Promise.all(updatePromises);
+        results.successful.push({
+          domainName: formattedDomainName,
+          action: action
+        });
+
+      } catch (error) {
+        results.failed.push({
+          domainName: domainName,
+          error: error.message
+        });
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `Bulk ${action} completed`,
+      data: {
+        successful: results.successful.length,
+        failed: results.failed.length,
+        total: results.total,
+        results: results
+      }
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error performing bulk action',
+      error: error.message
+    });
+  }
+};
+
 // Update domain
 const updateDomain = async (req, res) => {
   try {
     const { id } = req.params;
     const updateData = { ...req.body };
     
-    // If domainName is being updated, check for duplicates
+    // Format domain name if being updated
     if (updateData.domainName) {
-      const domainExists = await checkDomainExists(updateData.domainName);
+      const formattedDomainName = formatDomainName(updateData.domainName);
+      updateData.domainName = formattedDomainName;
+      
+      const domainExists = await checkDomainExists(formattedDomainName);
       if (domainExists) {
         // Check if it's the same domain being updated
         const currentDoc = await getDoc(doc(db, COLLECTION_NAME, id));
-        if (currentDoc.exists() && currentDoc.data().domainName !== updateData.domainName) {
+        if (currentDoc.exists() && currentDoc.data().domainName !== formattedDomainName) {
           return res.status(409).json({
             success: false,
-            message: `Domain '${updateData.domainName}' already exists`
+            message: `Domain '${formattedDomainName}' already exists`
           });
         }
       }
@@ -460,6 +646,11 @@ const updateDomain = async (req, res) => {
     if (updateData.backlink) updateData.backlink = parseInt(updateData.backlink);
     if (updateData.price) updateData.price = parseFloat(updateData.price);
     if (updateData.status !== undefined) updateData.status = updateData.status === true || updateData.status === 'true';
+    
+    // Handle type field
+    if (updateData.type === undefined) {
+      updateData.type = 'Shell';
+    }
     
     // Handle ischannel and postDateTime
     if (updateData.ischannel !== undefined) {
@@ -603,6 +794,7 @@ const removeFromChannel = async (req, res) => {
   }
 };
 
+// Get public domains (only ischannel: true)
 const getPublicDomains = async (req, res) => {
   try {
     const q = query(
@@ -621,6 +813,7 @@ const getPublicDomains = async (req, res) => {
         domainName: data.domainName,
         country: data.country,
         category: data.category,
+        type: data.type || 'Shell',
         da: data.da || 0,
         pa: data.pa || 0,
         ss: data.ss || 0,
@@ -632,6 +825,7 @@ const getPublicDomains = async (req, res) => {
       });
     });
 
+    console.log(`Returning ${domains.length} public domains`);
     res.status(200).json({
       success: true,
       data: domains
@@ -647,7 +841,8 @@ const getPublicDomains = async (req, res) => {
 };
 
 module.exports = {
-  getAllDomains,
+  getAllDomains, // New endpoint for all domains
+  getAdminDomains, // Renamed from getAllDomains
   createDomain,
   createDomains,
   importDomainsFromCSV,
@@ -658,5 +853,6 @@ module.exports = {
   postToChannel,
   removeFromChannel,
   getPublicDomains,
+  bulkActions,
   upload
 };
