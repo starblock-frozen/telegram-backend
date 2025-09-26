@@ -344,7 +344,7 @@ Welcome to our community! 🚀`;
             [
               {
                 text: '📞 Contact Support',
-                url: 'https://t.me/+XMEn5LldGD1jZjkx'
+                url: 'https://t.me/ph1l1pj0hn'
               }
             ]
           ]
