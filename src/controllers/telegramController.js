@@ -405,7 +405,7 @@ Thank you for your understanding.`;
               [
                 {
                   text: '📞 Contact Support',
-                  url: 'https://t.me/+XMEn5LldGD1jZjkx'
+                  url: 'https://t.me/ph1l1pj0hn'
                 }
               ]
             ]
@@ -611,7 +611,7 @@ Click the button below to launch our web application and start your domain inves
           [
             {
               text: '📞 Contact Support',
-              url: 'https://t.me/+XMEn5LldGD1jZjkx'
+              url: 'https://t.me/ph1l1pj0hn'
             },
             {
               text: '💬 Join Channel',
@@ -793,7 +793,7 @@ Click the button below to launch our web application and explore premium domains
               [
                 {
                   text: '📞 Contact Support',
-                  url: 'https://t.me/+XMEn5LldGD1jZjkx'
+                  url: 'https://t.me/ph1l1pj0hn'
                 }
               ]
             ]
@@ -916,7 +916,7 @@ Click the button below to launch our web application and explore premium domains
             [
               {
                 text: '📞 Contact Support',
-                url: 'https://t.me/+XMEn5LldGD1jZjkx'
+                url: 'https://t.me/ph1l1pj0hn'
               }
             ]
           ]
