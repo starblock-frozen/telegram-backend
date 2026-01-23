@@ -10,6 +10,7 @@ const domainRoutes = require('./routes/domainRoutes');
 const ticketRoutes = require('./routes/ticketRoutes');
 const authRoutes = require('./routes/authRoutes');
 const telegramRoutes = require('./routes/telegramRoutes');
+const commentRoutes = require('./routes/commentRoutes'); // ADD THIS
 
 // Initialize Telegram bot
 const { initializeTelegramBot } = require('./controllers/telegramController');
@@ -88,8 +89,18 @@ const broadcastNewTicket = (ticket) => {
   });
 };
 
+// Function to broadcast new comment notifications - ADD THIS
+const broadcastNewComment = (comment) => {
+  broadcastToAll({
+    type: 'NEW_COMMENT',
+    comment: comment,
+    timestamp: new Date().toISOString()
+  });
+};
+
 // Make broadcast functions available globally
 global.broadcastNewTicket = broadcastNewTicket;
+global.broadcastNewComment = broadcastNewComment; // ADD THIS
 global.broadcastToAll = broadcastToAll;
 
 // Middleware
@@ -102,6 +113,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/domains', domainRoutes);
 app.use('/api/tickets', ticketRoutes);
 app.use('/api/telegram', telegramRoutes);
+app.use('/api/comments', commentRoutes); // ADD THIS
 
 // Health check
 app.get('/api/health', (req, res) => {
