@@ -344,7 +344,7 @@ Welcome to our community! 🚀`;
             [
               {
                 text: '📞 Contact Support',
-                url: 'https://t.me/ph1l1pj0hn'
+                url: 'https://t.me/bitterSweet4me'
               }
             ]
           ]
@@ -405,7 +405,7 @@ Thank you for your understanding.`;
               [
                 {
                   text: '📞 Contact Support',
-                  url: 'https://t.me/ph1l1pj0hn'
+                  url: 'https://t.me/bitterSweet4me'
                 }
               ]
             ]
@@ -611,7 +611,7 @@ Click the button below to launch our web application and start your domain inves
           [
             {
               text: '📞 Contact Support',
-              url: 'https://t.me/ph1l1pj0hn'
+              url: 'https://t.me/bitterSweet4me'
             },
             {
               text: '💬 Join Channel',
@@ -793,7 +793,7 @@ Click the button below to launch our web application and explore premium domains
               [
                 {
                   text: '📞 Contact Support',
-                  url: 'https://t.me/ph1l1pj0hn'
+                  url: 'https://t.me/bitterSweet4me'
                 }
               ]
             ]
@@ -916,7 +916,7 @@ Click the button below to launch our web application and explore premium domains
             [
               {
                 text: '📞 Contact Support',
-                url: 'https://t.me/ph1l1pj0hn'
+                url: 'https://t.me/bitterSweet4me'
               }
             ]
           ]
@@ -1324,6 +1324,25 @@ const getAllJoinRequests = async (req, res) => {
   }
 };
 
+const deleteTelegramUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    await deleteDoc(doc(db, COLLECTION_NAME, id));
+    
+    res.status(200).json({
+      success: true,
+      message: 'Telegram user deleted successfully'
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error deleting telegram user',
+      error: error.message
+    });
+  }
+};
+
 module.exports = {
   initializeTelegramBot,
   getAllTelegramUsers,
@@ -1331,5 +1350,6 @@ module.exports = {
   saveUserInfo,
   sendNotification,
   getChannelSubscribersList,
-  getAllJoinRequests
+  getAllJoinRequests,
+  deleteTelegramUser
 };
