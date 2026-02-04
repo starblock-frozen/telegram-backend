@@ -18,7 +18,7 @@ const initializeAuth = async () => {
     const querySnapshot = await getDocs(q);
     
     if (querySnapshot.empty) {
-      const hashedPassword = await bcrypt.hash('admin123', 10);
+      const hashedPassword = await bcrypt.hash('j)jdhend&62<<;', 10);
       await addDoc(collection(db, COLLECTION_NAME), {
         username: 'admin',
         password: hashedPassword,
