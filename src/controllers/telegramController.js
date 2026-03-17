@@ -1079,7 +1079,7 @@ Please request to join our channel first:`;
           return;
         }
 
-        const unknownCommandMessage = `❓ <b>Unknown Command</b>
+        let unknownCommandMessage = `❓ <b>Unknown Command</b>
 
 Sorry, I don't recognize the command "${text}".
 
